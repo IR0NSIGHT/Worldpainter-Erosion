@@ -4,6 +4,7 @@
 //"Fast Hydraulic and Thermal Erosion on the GPU" by Balazs Jako
 
 ///////////////////////////////////////////////////CODE/////////////////////////////////////////////////////
+var DEBUG = true;
 
 var ITERATIONS = 1;
 var DELTA_TIME = 0.01;
@@ -18,19 +19,22 @@ var DEPOSITION_CONSTANT = 1;
 var BLOCK_CONSTANT = 1 / 256 / 256;
 var EVAPORATION_CONSTANT = 1;
 
-var minX = dimension.getExtent().getX() * 128;
-var maxX =
-  (dimension.getExtent().getX() + dimension.getExtent().getWidth()) * 128;
-var minY = dimension.getExtent().getY() * 128;
-var maxY =
-  (dimension.getExtent().getY() + dimension.getExtent().getHeight()) * 128;
-var width = maxX - minX;
-var height = maxY - minY;
+var extent = extent();
+var width = extent.width;
+var height = extent.height;
 
+if (DEBUG)
+  print = string => console.log(string);
+var arguments;
+if (DEBUG)
+  arguments = ["fluvial()"]
+
+var coords;
+var coordsNext;
 /////////////////////////
 
 print("Script by ctRy\n");
-
+print(arguments);
 var args = arguments[0].split("\n");
 
 var coords = [];
@@ -67,10 +71,17 @@ function helpGeneral() {
   print("hybrid(): fluvial + thermal erosion");
 }
 
+function deepCloneArray(arr) {
+  var clonedArray = [];
+  for (var i = 0; i < arr.length; i++) {
+    // Deep clone each item in the array using JSON.stringify and JSON.parse
+    clonedArray[i] = JSON.parse(JSON.stringify(arr[i]));
+  }
+  return clonedArray;
+}
+
 function fluvial(argsFunc) {
   print("Starting Fluvial Erosion");
-
-  addCoords();
 
   argsFunc.forEach(function (argu, i, arr) {
     if (arr[i].indexOf("=") != -1) {
@@ -111,14 +122,19 @@ function fluvial(argsFunc) {
     // var EVAPORATION_CONSTANT = 0.5;
   });
 
+  coords = addCoords(width, height);
+  print(coords)
   for (var i = 0; i < ITERATIONS; i++) {
-    print("(" + (i + 1) + " / " + ITERATIONS + ")");
+    coordsNext = deepCloneArray(coords);
+    print(coordsNext);
 
+    print("(" + (i + 1) + " / " + ITERATIONS + ")");
     increaseWater();
     flow();
     erode();
     transportSediment();
     decreaseWater();
+    coords = coordsNext;
   }
 
   for (var y = 0; y < height; y++) {
@@ -139,9 +155,25 @@ function hybrid() {
 
 /////////////////////////
 
-function addCoords() {
-  print("Adding coords");
+/**
+ * @typedef {Object} Cell
+ * @property {number} waterHeightRel - The relative water height, calculated as `Math.max(0, getWaterLevelAt(x, y) - height)`.
+ * @property {number} sedimentAmount - The amount of sediment present, initialized to 0.
+ * @property {number} flowLeft - The flow of water to the left, initialized to 0.
+ * @property {number} flowRight - The flow of water to the right, initialized to 0.
+ * @property {number} flowTop - The flow of water to the top, initialized to 0.
+ * @property {number} flowBottom - The flow of water to the bottom, initialized to 0.
+ * @property {number} velocityX - The velocity of water in the X direction, initialized to 0.
+ * @property {number} velocityY - The velocity of water in the Y direction, initialized to 0.
+ */
 
+/**
+ *
+ * @returns {Cell[]} coords
+ */
+function addCoords(width, height) {
+  print("Adding coords");
+  coords = [];
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
       //waterHeightRel: water height (relative to terrain height)
@@ -161,8 +193,14 @@ function addCoords() {
       };
     }
   }
+  return coords;
 }
 
+/**
+ *
+ * @param {Cell} obj
+ * @returns {string}
+ */
 function fluxToString(obj) {
   function roundNumbers(value) {
     if (typeof value === "number") {
@@ -202,16 +240,9 @@ function fluxToString(obj) {
  */
 function increaseWater() {
   coords.forEach(function (coord, i, arr) {
-    arr[i].waterHeightRel =
-      arr[i].waterHeightRel + DELTA_TIME * 1.0 * RAIN_CONSTANT; //TODO
+    coordsNext[i].waterHeightRel =
+      coords[i].waterHeightRel + DELTA_TIME * 1.0 * RAIN_CONSTANT;
   });
-
-  // for (var i in coords)
-  // {
-  // 	if (!coords.hasOwnProperty(i)) continue;
-
-  // 	coords[i].waterHeightRel += DELTA_TIME * 1.0 * RAIN_CONSTANT;
-  // }
 }
 
 function waterHeightAt(x, y) {
@@ -249,7 +280,7 @@ function timestepOutflow(x, y, deltaX, deltaY, flow) {
  * @param {*} coords
  * @param {*} coordsNext
  */
-function timestepFlow(coords, coordsNext) {
+function timestepFlow() {
   //calculate flux for each 4 directions
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
@@ -311,6 +342,26 @@ function timestepFlow(coords, coordsNext) {
   }
 }
 
+/**
+ *
+ * @param {*} x
+ * @param {*} y
+ * @returns {Cell}
+ */
+function coordNext(x, y) {
+  return coordsNext[x + y * width];
+}
+
+/**
+ * 
+ * @param {*} x 
+ * @param {*} y 
+ * @returns {Cell}
+ */
+function coord(x, y) {
+  return coords[x + y * width];
+}
+
 //step 2
 /**
  * 2. Flow simulation using shallow-water model. Computation of velocity field and water height changes.
@@ -322,60 +373,65 @@ function flow(coords, coordsNext) {
   //equation 2,3,4,5, section 3.2.1
   timestepFlow(coords, coordsNext);
 
+  //equation 6 and 7, update water height
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
-      var i = x + y * width;
-
+      var cellNext = coordNext(x, y);
       var sumFOut =
-        coordsNext[i].flowLeft +
-        coordsNext[i].flowRight +
-        coordsNext[i].flowTop +
-        coordsNext[i].flowBottom;
+        cellNext.flowLeft +
+        cellNext.flowRight +
+        cellNext.flowTop +
+        cellNext.flowBottom;
 
       var sumFIn = 0;
-      if (x > 0) sumFIn += coordsNext[x - 1 + y * width].flowRight;
-      if (x + 1 < width) sumFIn += coordsNext[x + 1 + y * width].flowLeft;
-      if (y > 0) sumFIn += coordsNext[x + (y + 1) * width].flowBottom;
-      if (y + 1 < height) sumFIn += coordsNext[x + (y - 1) * width].flowTop;
+      if (x > 0) sumFIn += coordNext(x - 1, y).flowRight;
+      if (x + 1 < width) sumFIn += coordNext(x + 1, y).flowLeft;
+      if (y + 1 < height) sumFIn += coordNext(x, y + 1).flowBottom;
+      if (y - 1 >= 0) sumFIn += coordNext(x, y - 1).flowTop;
 
-      //update water level
-      coords[i].waterHeightRel = Math.max(
-        0,
-        coords[i].waterHeightRel +
-          (DELTA_TIME * (sumFIn - sumFOut)) / PIPE_LENGTH / PIPE_LENGTH
-      );
+      var netVolumeChangeXY = DELTA_TIME * (sumFIn - sumFOut);
 
-      //update velocity
-      if (x == 0)
-        //left border
-        coords[i].velocityX =
-          coords[i].flowRight - coords[x + 1 + y * width].flowLeft;
-      else if (x + 1 == width)
-        //right border
-        coords[i].velocityX =
-          coords[x - 1 + y * width].flowRight - coords[i].flowLeft;
-      else
-        coords[i].velocityX =
-          coords[i].flowRight -
-          coords[x + 1 + y * width].flowLeft +
-          coords[x - 1 + y * width].flowRight -
-          coords[i].flowLeft;
+      coordNext(x, y).waterHeightRel =
+        coord(x, y).waterHeightRel +
+        netVolumeChangeXY / (PIPE_LENGTH * PIPE_LENGTH);
+    }
+  }
 
-      if (y == 0)
-        //top border
-        coords[i].velocityX =
-          coords[i].flowBottom - coords[x + (y + 1) * width].flowTop;
-      else if (y + 1 == height)
-        //bottom border
-        coords[i].velocityX =
-          coords[x + (y - 1) * width].flowBottom - coords[i].flowTop;
-      else
-        coords[i].velocityX =
-          coords[i].flowBottom -
-          coords[x + (y + 1) * width].flowTop +
-          coords[x + (y - 1) * width].flowBottom -
-          coords[i].flowTop;
-      //	print("after flowing:" + fluxToString(coords[i]));
+  //update velocity
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      var averageWaterPassingX = 0;
+      {
+        //update velocity
+        if (x - 1 >= 0)
+          averageWaterPassingX +=
+            coordNext(x - 1, y).flowRight - coordNext(x, y).flowLeft;
+        if (x + 1 < width)
+          averageWaterPassingX +=
+            coordNext(x, y).flowRight - coordNext(x + 1, y).flowLeft;
+
+        averageWaterPassingX = averageWaterPassingX / 2;
+      }
+
+      var averageWaterPassingY = 0;
+      {
+        if (y - 1 >= 0)
+          averageWaterPassingY +=
+            coordNext(x, y - 1).flowTop - coordNext(x, y).flowBottom;
+        if (y + 1 < width)
+          averageWaterPassingY +=
+            coordNext(x, y).flowTop - coordNext(x, y + 1).flowBottom;
+
+        averageWaterPassingY = averageWaterPassingY / 2;
+      }
+
+      var averageWaterHeight =
+        (coordNext(x, y).waterHeightRel + coord(x, y).waterHeightRel) / 2 +
+        getHeightAt(x, y);
+      var velX = averageWaterPassingX / averageWaterHeight;
+      var velY = averageWaterPassingY / averageWaterHeight;
+      coordNext(x, y).velX = velX;
+      coordNext(x, y).velY = velY;
     }
   }
 }
@@ -555,25 +611,55 @@ function decreaseWater() {
 
 /////////////////////////
 
+
 function getHeightAt(x, y) {
+  if (DEBUG) return 62;
   return dimension.getHeightAt(x + minX, y + minY);
 }
 function setHeightAt(x, y, val) {
+  if (DEBUG) return;
   dimension.setHeightAt(x + minX, y + minY, val);
 }
 
 function getWaterLevelAt(x, y) {
+  if (DEBUG) return 62;
   return dimension.getWaterLevelAt(x + minX, y + minY);
 }
 function setWaterLevelAt(x, y, val) {
   //relative
+  if (DEBUG) return;
   dimension.setWaterLevelAt(x + minX, y + minY, getHeightAt(x, y) + val);
 }
 
 function getSlopeAt(x, y) {
+  if (DEBUG) return 0;
   return dimension.getSlope(x + minX, y + minY);
+}
+
+/**
+ * 
+ * @returns {{ width: number, height: number}}
+ */
+function extent() {
+  if (DEBUG) return { width: 10, height: 10 };
+
+  var minX = dimension.getExtent().getX() * 128;
+  var maxX =
+    (dimension.getExtent().getX() + dimension.getExtent().getWidth()) * 128;
+  var minY = dimension.getExtent().getY() * 128;
+  var maxY =
+    (dimension.getExtent().getY() + dimension.getExtent().getHeight()) * 128;
+  var width = maxX - minX;
+  var height = maxY - minY;
+  return { width: width, height: height}
 }
 
 function truncate(number) {
   return number > 0 ? Math.floor(number) : Math.ceil(number);
+}
+
+function max(a,b) {
+  if (a < b)
+    return b;
+  return a;
 }
