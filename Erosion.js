@@ -214,6 +214,103 @@ function increaseWater() {
   // }
 }
 
+function waterHeightAt(x, y) {
+  var i = x + y * width;
+  return getHeightAt(x, y) + coords[i].waterHeightRel;
+}
+
+/**
+ * pure function, no sideeffects
+ * @param {int} x
+ * @param {int} y
+ * @param {int} deltaX
+ * @param {int} deltaY
+ * @param {float} flow flow in direction deltaX/deltaY
+ * @returns
+ */
+function timestepOutflow(x, y, deltaX, deltaY, flow) {
+  var flowLeftAfter = max(
+    0,
+    flow +
+      (DELTA_TIME *
+        PIPE_AREA *
+        GRAVITY *
+        (waterHeightAt(x, y) - waterHeightAt(x + deltaX, y + deltaY))) /
+        PIPE_LENGTH
+  );
+  return flowLeftAfter;
+}
+
+/**
+ * section 3.2.1
+ * calculate coordsNext flow in LRUP dir from coords
+ * pure function (except global constants)
+ * modifies coordsNext
+ * @param {*} coords
+ * @param {*} coordsNext
+ */
+function timestepFlow(coords, coordsNext) {
+  //calculate flux for each 4 directions
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      var i = x + y * width;
+
+      if (x - 1 >= 0)
+        coordsNext[i].flowLeft = timestepOutflow(
+          x,
+          y,
+          -1,
+          0,
+          coords[i].flowLeft
+        );
+      if (x + 1 < width)
+        coordsNext[i].flowRight = timestepOutflow(
+          x,
+          y,
+          1,
+          0,
+          coords[i].flowRight
+        );
+      if (y - 1 >= 0)
+        coordsNext[i].flowTop = timestepOutflow(
+          x,
+          y,
+          0,
+          -1,
+          coords[i].flowBottom
+        );
+      if (y + 1 < height)
+        coordsNext[i].flowBottom = timestepOutflow(
+          x,
+          y,
+          0,
+          1,
+          coords[i].flowTop
+        );
+
+      //scale flux so the sum of every directions is less than the water in the tile
+      var sumF =
+        coordsNext[i].flowLeft +
+        coordsNext[i].flowRight +
+        coordsNext[i].flowTop +
+        coordsNext[i].flowBottom;
+
+      if (sumF > coordsNext[i].waterHeightRel) {
+        //TODO: only when sum exceeds current water? or always?
+        var factor = Math.min(
+          1,
+          (coordsNext[i].waterHeightRel * PIPE_LENGTH * PIPE_LENGTH) /
+            (sumF * DELTA_TIME)
+        );
+        coordsNext[i].flowLeft *= factor;
+        coordsNext[i].flowRight *= factor;
+        coordsNext[i].flowTop *= factor;
+        coordsNext[i].flowBottom *= factor;
+      }
+    }
+  }
+}
+
 //step 2
 /**
  * 2. Flow simulation using shallow-water model. Computation of velocity field and water height changes.
@@ -221,101 +318,25 @@ function increaseWater() {
  * flow (in all 4 directions) and velocity x y are updated
  * flow is based on heightmap and neighbours height
  */
-function flow() {
-  //calculate flux for each 4 directions
-  for (var y = 0; y < height; y++) {
-    for (var x = 0; x < width; x++) {
-      var i = x + y * width;
-      if (x > 0)
-        coords[i].flowLeft = Math.max(
-          0,
-          coords[i].flowLeft +
-            (DELTA_TIME *
-              PIPE_AREA *
-              GRAVITY *
-              (getHeightAt(x, y) +
-                coords[i].waterHeightRel -
-                getHeightAt(x - 1, y) -
-                coords[i - 1].waterHeightRel)) /
-              PIPE_LENGTH
-        );
-      if (x + 1 < width)
-        coords[i].flowRight = Math.max(
-          0,
-          coords[i].flowRight +
-            (DELTA_TIME *
-              PIPE_AREA *
-              GRAVITY *
-              (getHeightAt(x, y) +
-                coords[i].waterHeightRel -
-                getHeightAt(x + 1, y) -
-                coords[i + 1].waterHeightRel)) /
-              PIPE_LENGTH
-        );
-      if (y > 0)
-        coords[i].flowTop = Math.max(
-          0,
-          coords[i].flowTop +
-            (DELTA_TIME *
-              PIPE_AREA *
-              GRAVITY *
-              (getHeightAt(x, y) +
-                coords[i].waterHeightRel -
-                getHeightAt(x + 1, y) -
-                coords[i - width].waterHeightRel)) /
-              PIPE_LENGTH
-        );
-      if (y + 1 < height)
-        coords[i].flowBottom = Math.max(
-          0,
-          coords[i].flowBottom +
-            (DELTA_TIME *
-              PIPE_AREA *
-              GRAVITY *
-              (getHeightAt(x, y) +
-                coords[i].waterHeightRel -
-                getHeightAt(x + 1, y) -
-                coords[i + width].waterHeightRel)) /
-              PIPE_LENGTH
-        );
-
-      //scale flux so the sum of every directions is less than the water in the tile
-      var sumF =
-        coords[i].flowLeft +
-        coords[i].flowRight +
-        coords[i].flowTop +
-        coords[i].flowBottom;
-      if (sumF > coords[i].waterHeightRel) {
-        var factor = Math.min(
-          1,
-          (coords[i].waterHeightRel * PIPE_LENGTH * PIPE_LENGTH) /
-            sumF /
-            DELTA_TIME
-        );
-        coords[i].flowLeft *= factor;
-        coords[i].flowRight *= factor;
-        coords[i].flowTop *= factor;
-        coords[i].flowBottom *= factor;
-      }
-
-      //print("after flowing:" + fluxToString(coords[i]));
-    }
-  }
+function flow(coords, coordsNext) {
+  //equation 2,3,4,5, section 3.2.1
+  timestepFlow(coords, coordsNext);
 
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
       var i = x + y * width;
 
       var sumFOut =
-        coords[i].flowLeft +
-        coords[i].flowRight +
-        coords[i].flowTop +
-        coords[i].flowBottom;
+        coordsNext[i].flowLeft +
+        coordsNext[i].flowRight +
+        coordsNext[i].flowTop +
+        coordsNext[i].flowBottom;
+
       var sumFIn = 0;
-      if (x > 0) sumFIn += coords[i - 1].flowRight;
-      if (x + 1 < width) sumFIn += coords[i + 1].flowLeft;
-      if (y > 0) sumFIn += coords[i - width].flowBottom;
-      if (y + 1 < height) sumFIn += coords[i + width].flowTop;
+      if (x > 0) sumFIn += coordsNext[x - 1 + y * width].flowRight;
+      if (x + 1 < width) sumFIn += coordsNext[x + 1 + y * width].flowLeft;
+      if (y > 0) sumFIn += coordsNext[x + (y + 1) * width].flowBottom;
+      if (y + 1 < height) sumFIn += coordsNext[x + (y - 1) * width].flowTop;
 
       //update water level
       coords[i].waterHeightRel = Math.max(
