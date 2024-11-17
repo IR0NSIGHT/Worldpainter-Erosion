@@ -162,7 +162,17 @@ function fluvial(argsFunc) {
     );
     print("totalFlow: " + coordsNext.reduce(sumFlows, 0));
 
+    print("total suspended soil:")
+    print(coordsNext.reduce(function (value, cell) {
+      return value + cell.sedimentAmount;
+    }, 0))
     erode();
+    print("erode")
+    print("total suspended soil:")
+    print(coordsNext.reduce(function (value, cell) {
+      return value + cell.sedimentAmount;
+    }, 0))
+
     transportSediment();
     decreaseWater();
     coords = coordsNext;
@@ -190,6 +200,7 @@ function hybrid() {
  * @typedef {Object} Cell
  * @property {number} waterHeight - The relative water height, calculated as `Math.max(0, getWaterLevelAt(x, y) - height)`.
  * @property {number} sedimentAmount - The amount of sediment present, initialized to 0.
+ * @property {number} terrainHeight - height of terrain at time t, intialized to dimension.getHeightAt
  * @property {number} flowLeft - The flow of water to the left, initialized to 0.
  * @property {number} flowRight - The flow of water to the right, initialized to 0.
  * @property {number} flowTop - The flow of water to the top, initialized to 0.
@@ -214,6 +225,7 @@ function addCoords(width, height) {
       //coords[x + y * width] = {waterHeight:Math.max(0, getWaterLevelAt(x, y) - height), sedimentAmount:0, f:{l:0, r:0, t:0, b:0}, v:{x:0, y:0} };
       coords[x + y * width] = {
         waterHeight: Math.max(0, getWaterLevelAt(x, y) - height),
+        terrainHeight: getHeightAt(x, y),
         sedimentAmount: 0,
         flowLeft: 0,
         flowRight: 0,
@@ -278,7 +290,7 @@ function increaseWater() {
 
 function waterHeightAt(x, y) {
   var i = x + y * width;
-  return getHeightAt(x, y) + coords[i].waterHeight;
+  return coordNext(x, y).terrainHeight + coords[i].waterHeight;
 }
 
 /**
@@ -297,7 +309,10 @@ function timestepOutflow(x, y, deltaX, deltaY, flow) {
       (DELTA_TIME *
         PIPE_AREA *
         GRAVITY *
-        (waterHeightAt(x, y) - waterHeightAt(x + deltaX, y + deltaY))) /
+        (coordNext(x, y).terrainHeight +
+          coordNext(x, y).waterHeight -
+          coordNext(x + deltaX, y + deltaY).terrainHeight +
+          coordNext(x + deltaX, y + deltaY).waterHeight)) /
         PIPE_LENGTH
   );
   return flowLeftAfter;
@@ -423,24 +438,22 @@ function flow() {
       if (y - 1 >= 0) sumFIn += coordNext(x, y - 1).flowTop;
 
       //net volume change of water
-      var deltaV = DELTA_TIME * (sumFIn - sumFOut);   
-      // END OF (6)  
+      var deltaV = DELTA_TIME * (sumFIn - sumFOut);
+      // END OF (6)
 
-      var waterheightD1 = coordNext(x,y).waterHeight;
+      var waterheightD1 = coordNext(x, y).waterHeight;
       var waterheightD2 = waterheightD1 + deltaV / (PIPE_LENGTH * PIPE_LENGTH);
       coordNext(x, y).waterHeight = waterheightD1;
       // END OF  (7)
-      
+
       // START (8) compute delta W x
-      var deltaWX = 0;  //average amount of water passing through cell
+      var deltaWX = 0; //average amount of water passing through cell
       {
         //update velocity
         if (x - 1 >= 0)
-          deltaWX +=
-            coordNext(x - 1, y).flowRight - coordNext(x, y).flowLeft;
+          deltaWX += coordNext(x - 1, y).flowRight - coordNext(x, y).flowLeft;
         if (x + 1 < width)
-          deltaWX +=
-            coordNext(x, y).flowRight - coordNext(x + 1, y).flowLeft;
+          deltaWX += coordNext(x, y).flowRight - coordNext(x + 1, y).flowLeft;
 
         deltaWX = deltaWX / 2;
       }
@@ -448,24 +461,22 @@ function flow() {
       var deltaWY = 0;
       {
         if (y - 1 >= 0)
-          deltaWY +=
-            coordNext(x, y - 1).flowTop - coordNext(x, y).flowBottom;
+          deltaWY += coordNext(x, y - 1).flowTop - coordNext(x, y).flowBottom;
         if (y + 1 < width)
-          deltaWY +=
-            coordNext(x, y).flowTop - coordNext(x, y + 1).flowBottom;
+          deltaWY += coordNext(x, y).flowTop - coordNext(x, y + 1).flowBottom;
 
         deltaWY = deltaWY / 2;
       }
 
-      var dAvg = (waterheightD1 + waterheightD2) / 2
+      var dAvg = (waterheightD1 + waterheightD2) / 2;
 
       // COMPUTE velocity(u,v) usin g (8) and (9)
       var ly = PIPE_LENGTH;
-      var lx = PIPE_LENGTH
+      var lx = PIPE_LENGTH;
       var velX = deltaWX / (dAvg * ly);
       var velY = deltaWY / (dAvg * lx);
-      coordNext(x, y).velX = velX;
-      coordNext(x, y).velY = velY;
+      coordNext(x, y).velocityX = velX;
+      coordNext(x, y).velocityY = velY;
     }
   }
 }
@@ -491,51 +502,44 @@ function erode() {
     for (var x = 0; x < width; x++) {
       var i = x + y * width;
 
-      var maxDepthMult = getHeightAt(x, y) >= MAX_EROSION_DEPTH ? 1 : 0;
-      if (maxDepthMult == 0 && getHeightAt(x, y) > 0)
-        maxDepthMult =
-          1 - (MAX_EROSION_DEPTH - getHeightAt(x, y)) / MAX_EROSION_DEPTH;
-
-      //irn: carry capacity of sediment based on slope and water velocity?
-      var capacity =
+      //START OF (10)
+      var tilt = max(0.01, Math.sin(calculateLocalTiltAngle(x, y))); 
+      var c_xy = //sediment capacity for cell xy
         SEDIMENT_CONSTANT *
-        Math.sin((getSlopeAt(x, y) * Math.PI) / 180) *
+        tilt *
         Math.sqrt(
-          coords[i].velocityX * coords[i].velocityX +
-            coords[i].velocityY * coords[i].velocityY
-        ) *
-        (1 - maxDepthMult);
-
-      if (capacity > 1000) print(capacity); //ironsight: is this for debugging?
-
-      if (capacity > coords[i].sedimentAmount) {
-        setHeightAt(
-          x,
-          y,
-          getHeightAt(x, y) -
-            DISSOLVING_CONSTANT *
-              (capacity - coords[i].sedimentAmount) *
-              BLOCK_CONSTANT
+          coordNext(x, y).velocityX * coordNext(x, y).velocityX +
+            coordNext(x, y).velocityY * coordNext(x, y).velocityY
         );
-        coords[i].sedimentAmount +=
-          DISSOLVING_CONSTANT * (capacity - coords[i].sedimentAmount);
-      } else if (capacity < coords[i].sedimentAmount) {
-        setHeightAt(
-          x,
-          y,
-          getHeightAt(x, y) +
-            DEPOSITION_CONSTANT *
-              (coords[i].sedimentAmount - capacity) *
-              BLOCK_CONSTANT
-        );
-        coords[i].sedimentAmount -=
-          DEPOSITION_CONSTANT * (coords[i].sedimentAmount - capacity);
+      //absord soil
+      if (c_xy > coordNext(x, y).sedimentAmount) {
+        //reduce terrain soil
+        var bTDeltaT =
+          coordNext(x, y).terrainHeight -
+          DISSOLVING_CONSTANT * (c_xy - coordNext(x, y).sedimentAmount);
+        coordNext(x, y).terrainHeight = bTDeltaT;
+
+        //increment suspended soid
+        var s1 =
+          coord(x, y).sedimentAmount +
+          DISSOLVING_CONSTANT * (c_xy - coord(x, y).sedimentAmount);
+        coordNext(x, y).sedimentAmount = s1;
+      } else {
+        //deposit soil onto terrain
+        var bTDeltaT =
+          coordNext(x, y).terrainHeight +
+          DISSOLVING_CONSTANT * (coordNext(x, y).sedimentAmount - c_xy);
+        coordNext(x, y).terrainHeight = bTDeltaT;
+
+        //increment suspended soid
+        var s1 =
+          coord(x, y).sedimentAmount -
+          DISSOLVING_CONSTANT * (coordNext(x, y).sedimentAmount - c_xy);
+        coordNext(x, y).sedimentAmount = s1;
       }
     }
   }
 }
-
-function transportSediment(flux) {}
 
 //step 5
 /**
@@ -623,10 +627,7 @@ function thermalErode() {}
 //step 7
 function decreaseWater() {
   coords.forEach(function (coord, i, arr) {
-    arr[i].waterHeight *= Math.max(
-      0,
-      1.0 - EVAPORATION_CONSTANT * DELTA_TIME
-    );
+    arr[i].waterHeight *= Math.max(0, 1.0 - EVAPORATION_CONSTANT * DELTA_TIME);
   });
 }
 
@@ -651,9 +652,36 @@ function setWaterLevelAt(x, y, val) {
   dimension.setWaterLevelAt(x + minX, y + minY, getHeightAt(x, y) + val);
 }
 
-function getSlopeAt(x, y) {
-  if (DEBUG) return 0;
-  return dimension.getSlope(x + minX, y + minY);
+/**
+ * Calculates the local tilt angle from the four direct neighbors of a cell.
+ * @param {number} x - The X coordinate of the cell.
+ * @param {number} y - The Y coordinate of the cell.
+ * @returns {number} The tilt angle in degrees.
+ */
+function calculateLocalTiltAngle(x, y) {
+  // Heights of the current cell and its neighbors
+  var slopeX = 0;
+  if (x > 0 && x + 1 < width) {
+    var heightLeft = coordNext(x - 1, y).terrainHeight;
+    var heightRight = coordNext(x + 1, y).terrainHeight;
+    slopeX = (heightRight - heightLeft) / 2; // Central difference approximation
+  }
+  var slopeY = 0;
+  if (y > 0 && y + 1 < height) {
+    var heightTop = coordNext(x, y - 1).terrainHeight;
+    var heightBottom = coordNext(x, y + 1).terrainHeight;
+
+    // Calculate slopes in X and Y directions
+    slopeY = (heightBottom - heightTop) / 2;
+  }
+  // Compute the magnitude of the gradient (tilt)
+  var gradientMagnitude = Math.sqrt(slopeX * slopeX + slopeY * slopeY);
+
+  // Convert to tilt angle in degrees
+  // Assuming the horizontal distance between neighbors is 1 unit
+  var tiltAngleRadians = Math.atan(gradientMagnitude);
+
+  return tiltAngleRadians;
 }
 
 /**
