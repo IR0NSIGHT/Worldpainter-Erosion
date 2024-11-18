@@ -4,11 +4,11 @@
 //"Fast Hydraulic and Thermal Erosion on the GPU" by Balazs Jako
 
 ///////////////////////////////////////////////////CODE/////////////////////////////////////////////////////
-var DEBUG = true;
+var DEBUG = false;
 
-var ITERATIONS = 1;
+var ITERATIONS = 10;
 var DELTA_TIME = 0.1;
-var RAIN_CONSTANT = 1;
+var RAIN_CONSTANT = 5;
 var PIPE_AREA = 20;
 var GRAVITY = 9.8;
 var PIPE_LENGTH = 1;
@@ -22,8 +22,11 @@ var EVAPORATION_CONSTANT = 1;
 var extent = extent();
 var width = extent.width;
 var height = extent.height;
+var minX = extent.minX;
+var minY = extent.minY;
 
-if (DEBUG) print = (string) => console.log(string);
+
+//if (DEBUG) print = (string) => console.log(string);
 var arguments;
 if (DEBUG) arguments = ["fluvial()"];
 
@@ -136,13 +139,8 @@ function fluvial(argsFunc) {
     coordsNext = deepCloneArray(coords);
     print("(" + (i + 1) + " / " + ITERATIONS + ")");
 
-    print(
-      coordsNext.map((f) => ({
-        water: f.waterHeight,
-        sediment: f.sedimentAmount,
-      }))
-    );
-    increaseWater();
+    if (i == 0) //only once
+      increaseWater();
     print("water was increased:");
     print(
       "total water:" +
@@ -154,18 +152,8 @@ function fluvial(argsFunc) {
 
     flow();
     print("flow was calculated:");
-    print(
-      "total water:" +
-        coordsNext.reduce(function (value, cell) {
-          return value + cell.waterHeight;
-        }, 0)
-    );
     print("totalFlow: " + coordsNext.reduce(sumFlows, 0));
 
-    print("total suspended soil:")
-    print(coordsNext.reduce(function (value, cell) {
-      return value + cell.sedimentAmount;
-    }, 0))
     erode();
     print("erode")
     print("total suspended soil:")
@@ -175,12 +163,22 @@ function fluvial(argsFunc) {
 
     transportSediment();
     decreaseWater();
+    print("evaporation")
+    var totalWater = coordsNext.reduce(function (value, cell) {
+      return value + cell.waterHeight;
+    }, 0);
+    print(
+      "total water:" + totalWater
+    );
     coords = coordsNext;
+    if (totalWater <= 0)
+      break;
   }
 
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
-      setWaterLevelAt(x, y, Math.ceil(coords[x + y * width].waterHeight));
+    //  setWaterLevelAt(x, y, Math.ceil(coords[x + y * width].waterHeight));
+      setHeightAt(x,y,coordNext(x,y).terrainHeight);
       //dimension.setTerrainAt(x + minX, y + minY, org.pepsoft.worldpainter.Terrain.WHITE_STAINED_CLAY);
     }
   }
@@ -519,7 +517,7 @@ function erode() {
           DISSOLVING_CONSTANT * (c_xy - coordNext(x, y).sedimentAmount);
         coordNext(x, y).terrainHeight = bTDeltaT;
 
-        //increment suspended soid
+        //increment suspended soil
         var s1 =
           coord(x, y).sedimentAmount +
           DISSOLVING_CONSTANT * (c_xy - coord(x, y).sedimentAmount);
@@ -550,73 +548,24 @@ function transportSediment() {
   var sed = [];
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
-      var i = x + y * width;
-      sed[i] = coords[i].sedimentAmount;
+      //write back soilT+1 (=s1) into soilT
+      coord(x,y).sedimentAmount = coordNext(x,y).sedimentAmount;
     }
   }
 
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
-      var i = x + y * width;
+      var cell = coordNext(x,y);
+      var xOrg = x-cell.velocityX * DELTA_TIME;
+      var yOrg = y-cell.velocityY * DELTA_TIME;
 
-      // if (coords[i].ss <= 0)
-      // 	continue;
-
-      var coordOffsetX = coords[i].velocityX > 0 ? 1 : 0;
-      var coordOffsetY = coords[i].velocityY > 0 ? 1 : 0;
-      var baseCoordX = x - coordOffsetX;
-      var baseCoordY = y - coordOffsetY;
-      var coordPartX = coords[i].velocityX * DELTA_TIME - coordOffsetX;
-      var coordPartY = coords[i].velocityY * DELTA_TIME - coordOffsetY;
-
-      var sSum = 0;
-      var wSum = 0;
-      //top left
-      if (
-        baseCoordX < width &&
-        x >= coordOffsetX &&
-        baseCoordY < height &&
-        y >= coordOffsetY
-      ) {
-        var weight = (1 + coordPartX) * (1 + coordPartY);
-        sSum += sed[baseCoordX + baseCoordY * width] * weight;
-        wSum += weight;
-      }
-      //top right
-      if (
-        baseCoordX + 1 < width &&
-        x + 1 >= coordOffsetX &&
-        baseCoordY < height &&
-        y >= coordOffsetY
-      ) {
-        var weight = coordPartX * (1 + coordPartY);
-        sSum += sed[baseCoordX + 1 + baseCoordY * width] * weight;
-        wSum += weight;
-      }
-      //bottom left
-      if (
-        baseCoordX < width &&
-        x >= coordOffsetX &&
-        baseCoordY + 1 < height &&
-        y + 1 >= coordOffsetY
-      ) {
-        var weight = (1 + coordPartX) * coordPartY;
-        sSum += sed[baseCoordX + (baseCoordY + 1) * width] * weight;
-        wSum += weight;
-      }
-      //bottom right
-      if (
-        baseCoordX + 1 < width &&
-        x + 1 >= coordOffsetX &&
-        baseCoordY + 1 < height &&
-        y + 1 >= coordOffsetY
-      ) {
-        var weight = coordPartX * coordPartY;
-        sSum += sed[baseCoordX + 1 + (baseCoordY + 1) * width] * weight;
-        wSum += weight;
-      }
-
-      coords[i].sedimentAmount = wSum > 0 ? sSum / wSum : 0;
+      var cellOrigin = coord(
+        xOrg,
+        yOrg
+      );
+      if (cellOrigin == undefined)
+        continue;
+      cell.sedimentAmount = cellOrigin.sedimentAmount;
     }
   }
 }
@@ -626,9 +575,11 @@ function thermalErode() {}
 
 //step 7
 function decreaseWater() {
-  coords.forEach(function (coord, i, arr) {
-    arr[i].waterHeight *= Math.max(0, 1.0 - EVAPORATION_CONSTANT * DELTA_TIME);
-  });
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      coordNext(x,y).waterHeight = coordNext(x,y).waterHeight * 1.0 - EVAPORATION_CONSTANT * DELTA_TIME;
+    }
+  }
 }
 
 /////////////////////////
@@ -649,7 +600,7 @@ function getWaterLevelAt(x, y) {
 function setWaterLevelAt(x, y, val) {
   //relative
   if (DEBUG) return;
-  dimension.setWaterLevelAt(x + minX, y + minY, getHeightAt(x, y) + val);
+  //dimension.setWaterLevelAt(x + minX, y + minY, getHeightAt(x, y) + val);
 }
 
 /**
@@ -699,7 +650,7 @@ function extent() {
     (dimension.getExtent().getY() + dimension.getExtent().getHeight()) * 128;
   var width = maxX - minX;
   var height = maxY - minY;
-  return { width: width, height: height };
+  return { width: width, height: height, minX: minX, minY: minY };
 }
 
 function truncate(number) {
