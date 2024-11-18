@@ -8,27 +8,27 @@ var DEBUG = false;
 
 var ITERATIONS = 10;
 var DELTA_TIME = 0.1;
-var RAIN_CONSTANT = 5;
+var RAIN_CONSTANT = 20;
 var PIPE_AREA = 20;
 var GRAVITY = 9.8;
 var PIPE_LENGTH = 1;
-var SEDIMENT_CONSTANT = 1;
+var SEDIMENT_CONSTANT = 10;
 var MAX_EROSION_DEPTH = 100;
-var DISSOLVING_CONSTANT = 0.5;
+var DISSOLVING_CONSTANT = 1;
 var DEPOSITION_CONSTANT = 1;
 var BLOCK_CONSTANT = 1 / 256 / 256;
 var EVAPORATION_CONSTANT = 1;
 
-var extent = extent();
-var width = extent.width;
-var height = extent.height;
-var minX = extent.minX;
-var minY = extent.minY;
+var extentMap = extent();
+var width = extentMap.width;
+var height = extentMap.height;
+var minX = extentMap.minX;
+var minY = extentMap.minY;
 
+print(JSON.stringify(extentMap));
 
 //if (DEBUG) print = (string) => console.log(string);
 var arguments;
-if (DEBUG) arguments = ["fluvial()"];
 
 var coords;
 var coordsNext;
@@ -134,13 +134,11 @@ function fluvial(argsFunc) {
   }
 
   coords = addCoords(width, height);
-  print(coords);
   for (var i = 0; i < ITERATIONS; i++) {
     coordsNext = deepCloneArray(coords);
     print("(" + (i + 1) + " / " + ITERATIONS + ")");
 
-    if (i == 0) //only once
-      increaseWater();
+    increaseWater();
     print("water was increased:");
     print(
       "total water:" +
@@ -155,30 +153,29 @@ function fluvial(argsFunc) {
     print("totalFlow: " + coordsNext.reduce(sumFlows, 0));
 
     erode();
-    print("erode")
-    print("total suspended soil:")
-    print(coordsNext.reduce(function (value, cell) {
-      return value + cell.sedimentAmount;
-    }, 0))
+    print("erode");
+    print("total suspended soil:");
+    print(
+      coordsNext.reduce(function (value, cell) {
+        return value + cell.sedimentAmount;
+      }, 0)
+    );
 
     transportSediment();
     decreaseWater();
-    print("evaporation")
+    print("evaporation");
     var totalWater = coordsNext.reduce(function (value, cell) {
       return value + cell.waterHeight;
     }, 0);
-    print(
-      "total water:" + totalWater
-    );
+    print("total water:" + totalWater);
     coords = coordsNext;
-    if (totalWater <= 0)
-      break;
+    if (totalWater <= 0) break;
   }
 
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
-    //  setWaterLevelAt(x, y, Math.ceil(coords[x + y * width].waterHeight));
-      setHeightAt(x,y,coordNext(x,y).terrainHeight);
+      //  setWaterLevelAt(x, y, Math.ceil(coords[x + y * width].waterHeight));
+      setHeightAt(x, y, coordNext(x, y).terrainHeight);
       //dimension.setTerrainAt(x + minX, y + minY, org.pepsoft.worldpainter.Terrain.WHITE_STAINED_CLAY);
     }
   }
@@ -222,7 +219,7 @@ function addCoords(width, height) {
       //v: velocity
       //coords[x + y * width] = {waterHeight:Math.max(0, getWaterLevelAt(x, y) - height), sedimentAmount:0, f:{l:0, r:0, t:0, b:0}, v:{x:0, y:0} };
       coords[x + y * width] = {
-        waterHeight: Math.max(0, getWaterLevelAt(x, y) - height),
+        waterHeight: 0,
         terrainHeight: getHeightAt(x, y),
         sedimentAmount: 0,
         flowLeft: 0,
@@ -501,7 +498,8 @@ function erode() {
       var i = x + y * width;
 
       //START OF (10)
-      var tilt = max(0.01, Math.sin(calculateLocalTiltAngle(x, y))); 
+      var tilt = max(0.01, calculateLocalTilt(x, y));
+
       var c_xy = //sediment capacity for cell xy
         SEDIMENT_CONSTANT *
         tilt *
@@ -549,22 +547,18 @@ function transportSediment() {
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
       //write back soilT+1 (=s1) into soilT
-      coord(x,y).sedimentAmount = coordNext(x,y).sedimentAmount;
+      coord(x, y).sedimentAmount = coordNext(x, y).sedimentAmount;
     }
   }
 
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
-      var cell = coordNext(x,y);
-      var xOrg = x-cell.velocityX * DELTA_TIME;
-      var yOrg = y-cell.velocityY * DELTA_TIME;
+      var cell = coordNext(x, y);
+      var xOrg = x - cell.velocityX * DELTA_TIME;
+      var yOrg = y - cell.velocityY * DELTA_TIME;
 
-      var cellOrigin = coord(
-        xOrg,
-        yOrg
-      );
-      if (cellOrigin == undefined)
-        continue;
+      var cellOrigin = coord(xOrg, yOrg);
+      if (cellOrigin == undefined) continue;
       cell.sedimentAmount = cellOrigin.sedimentAmount;
     }
   }
@@ -577,7 +571,8 @@ function thermalErode() {}
 function decreaseWater() {
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
-      coordNext(x,y).waterHeight = coordNext(x,y).waterHeight * 1.0 - EVAPORATION_CONSTANT * DELTA_TIME;
+      coordNext(x, y).waterHeight =
+        coordNext(x, y).waterHeight * 1.0 - EVAPORATION_CONSTANT * DELTA_TIME;
     }
   }
 }
@@ -609,20 +604,26 @@ function setWaterLevelAt(x, y, val) {
  * @param {number} y - The Y coordinate of the cell.
  * @returns {number} The tilt angle in degrees.
  */
-function calculateLocalTiltAngle(x, y) {
+function calculateLocalTilt(x, y) {
   // Heights of the current cell and its neighbors
   var slopeX = 0;
   if (x > 0 && x + 1 < width) {
     var heightLeft = coordNext(x - 1, y).terrainHeight;
     var heightRight = coordNext(x + 1, y).terrainHeight;
     slopeX = (heightRight - heightLeft) / 2; // Central difference approximation
+    if (x + minX == 11 && y + minY == 1) {
+      print("left" + heightLeft);
+      print("right" + heightRight);
+    }
   }
   var slopeY = 0;
   if (y > 0 && y + 1 < height) {
     var heightTop = coordNext(x, y - 1).terrainHeight;
     var heightBottom = coordNext(x, y + 1).terrainHeight;
-
-    // Calculate slopes in X and Y directions
+    if (x + minX == 11 && y + minY == 1) {
+      print("top" + heightTop);
+      print("bottom" + heightBottom);
+    } // Calculate slopes in X and Y directions
     slopeY = (heightBottom - heightTop) / 2;
   }
   // Compute the magnitude of the gradient (tilt)
@@ -632,7 +633,25 @@ function calculateLocalTiltAngle(x, y) {
   // Assuming the horizontal distance between neighbors is 1 unit
   var tiltAngleRadians = Math.atan(gradientMagnitude);
 
-  return tiltAngleRadians;
+  if (x + minX == 11 && y + minY == 1)
+    print(
+      "" +
+        (x + minX) +
+        "," +
+        (y + minY) +
+        " slopeX = " +
+        slopeX +
+        " slopeY = " +
+        slopeY +
+        "gradient mag" +
+        gradientMagnitude +
+        " tilt angle rad: " +
+        tiltAngleRadians +
+        " sin tilt: " +
+        Math.sin(tiltAngleRadians)
+    );
+
+  return Math.sin(tiltAngleRadians);
 }
 
 /**
