@@ -27,7 +27,7 @@ var minY = extentMap.minY;
 
 print(JSON.stringify(extentMap));
 
-//if (DEBUG) print = (string) => console.log(string);
+arguments = ["fluvial()"];
 var arguments;
 
 var coords;
@@ -139,23 +139,18 @@ function fluvial(argsFunc) {
     print("(" + (i + 1) + " / " + ITERATIONS + ")");
 
     increaseWater();
-    print("water was increased:");
     print(
       "total water:" +
         coordsNext.reduce(function (value, cell) {
           return value + cell.waterHeight;
         }, 0)
     );
-    print("totalFlow: " + coordsNext.reduce(sumFlows, 0));
 
     flow();
-    print("flow was calculated:");
     print("totalFlow: " + coordsNext.reduce(sumFlows, 0));
 
     erode();
-    print("erode");
-    print("total suspended soil:");
-    print(
+    print("total suspended soil:"+
       coordsNext.reduce(function (value, cell) {
         return value + cell.sedimentAmount;
       }, 0)
@@ -163,7 +158,6 @@ function fluvial(argsFunc) {
 
     transportSediment();
     decreaseWater();
-    print("evaporation");
     var totalWater = coordsNext.reduce(function (value, cell) {
       return value + cell.waterHeight;
     }, 0);
@@ -209,7 +203,6 @@ function hybrid() {
  * @returns {Cell[]} coords
  */
 function addCoords(width, height) {
-  print("Adding coords");
   coords = [];
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
@@ -611,19 +604,11 @@ function calculateLocalTilt(x, y) {
     var heightLeft = coordNext(x - 1, y).terrainHeight;
     var heightRight = coordNext(x + 1, y).terrainHeight;
     slopeX = (heightRight - heightLeft) / 2; // Central difference approximation
-    if (x + minX == 11 && y + minY == 1) {
-      print("left" + heightLeft);
-      print("right" + heightRight);
-    }
   }
   var slopeY = 0;
   if (y > 0 && y + 1 < height) {
     var heightTop = coordNext(x, y - 1).terrainHeight;
     var heightBottom = coordNext(x, y + 1).terrainHeight;
-    if (x + minX == 11 && y + minY == 1) {
-      print("top" + heightTop);
-      print("bottom" + heightBottom);
-    } // Calculate slopes in X and Y directions
     slopeY = (heightBottom - heightTop) / 2;
   }
   // Compute the magnitude of the gradient (tilt)
@@ -632,24 +617,6 @@ function calculateLocalTilt(x, y) {
   // Convert to tilt angle in degrees
   // Assuming the horizontal distance between neighbors is 1 unit
   var tiltAngleRadians = Math.atan(gradientMagnitude);
-
-  if (x + minX == 11 && y + minY == 1)
-    print(
-      "" +
-        (x + minX) +
-        "," +
-        (y + minY) +
-        " slopeX = " +
-        slopeX +
-        " slopeY = " +
-        slopeY +
-        "gradient mag" +
-        gradientMagnitude +
-        " tilt angle rad: " +
-        tiltAngleRadians +
-        " sin tilt: " +
-        Math.sin(tiltAngleRadians)
-    );
 
   return Math.sin(tiltAngleRadians);
 }
